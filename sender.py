@@ -1,28 +1,39 @@
 #!/usr/bin/env python3
 """Send CPU load + RAM usage to Arduino Nano (nano1602.ino) via USB Serial.
 Works with OR without psutil — falls back to /proc/stat + /proc/meminfo.
-Graceful error messages if dependencies are missing."""
+Auto-installs pyserial if missing."""
 
 import time
 import sys
 import glob
 import os
+import subprocess
 
 BAUD = 9600
 UPDATE_INTERVAL = 2  # seconds
 
-# ─── Dependency check ────────────────────────────────────
+
+# ─── Auto-install pyserial if missing ────────────────────
 
 try:
     import serial
 except ImportError:
-    print("Error: pyserial not installed.")
-    print("  Install:  pip3 install pyserial")
-    print("  Or:       pip install pyserial")
-    sys.exit(1)
+    print("[!] pyserial not found, installing...")
+    try:
+        subprocess.check_call(
+            [sys.executable, "-m", "pip", "install", "pyserial"],
+            stdout=subprocess.DEVNULL,
+        )
+        import serial
+        print("[✓] pyserial installed successfully")
+    except Exception as e:
+        print(f"[✗] Failed to install pyserial: {e}")
+        print("  Manual install: pip3 install pyserial")
+        sys.exit(1)
 
 
 # ─── Port detection ──────────────────────────────────────
+
 
 def find_port():
     """Find available USB-Serial port."""
@@ -33,6 +44,7 @@ def find_port():
 
 
 # ─── CPU / RAM metrics (no psutil) ────────────────────────
+
 
 def _read_proc_stat():
     """Read CPU idle/total from /proc/stat."""
