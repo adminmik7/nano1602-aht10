@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Send CPU load + RAM usage to Arduino Nano (nano1602.ino) via USB Serial.
 Works with OR without psutil — falls back to /proc/stat + /proc/meminfo.
-Auto-installs pyserial if missing."""
+Auto-installs all dependencies."""
 
 import time
 import sys
@@ -13,23 +13,47 @@ BAUD = 9600
 UPDATE_INTERVAL = 2  # seconds
 
 
-# ─── Auto-install pyserial if missing ────────────────────
+# ─── Auto-install dependencies ───────────────────────────
 
+def _pip_install(package):
+    """Install a Python package via pip."""
+    print(f"[!] {package} not found, installing...")
+    try:
+        subprocess.check_call(
+            [sys.executable, "-m", "pip", "install", "--quiet", package],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        return True
+    except Exception as e:
+        print(f"[✗] Failed to install {package}: {e}")
+        return False
+
+
+# pyserial — required (connection to Arduino)
 try:
     import serial
 except ImportError:
-    print("[!] pyserial not found, installing...")
-    try:
-        subprocess.check_call(
-            [sys.executable, "-m", "pip", "install", "pyserial"],
-            stdout=subprocess.DEVNULL,
-        )
+    if _pip_install("pyserial"):
         import serial
         print("[✓] pyserial installed successfully")
-    except Exception as e:
-        print(f"[✗] Failed to install pyserial: {e}")
-        print("  Manual install: pip3 install pyserial")
+    else:
+        print("  Manual: pip3 install pyserial")
         sys.exit(1)
+
+
+# psutil — optional (better metrics, but /proc fallback works)
+try:
+    import psutil
+    _psutil_available = True
+except ImportError:
+    if _pip_install("psutil"):
+        import psutil
+        print("[✓] psutil installed successfully (best accuracy)")
+        _psutil_available = True
+    else:
+        print("[?] psutil install skipped, will use /proc (less accurate)")
+        _psutil_available = False
 
 
 # ─── Port detection ──────────────────────────────────────
@@ -51,7 +75,7 @@ def _read_proc_stat():
     with open("/proc/stat") as f:
         parts = f.readline().split()
     idle = int(parts[3]) + int(parts[4])
-    total = sum(int(x) for x in parts[1:8])
+    total = sum(int(x) for x in parts[1:])
     return idle, total
 
 
@@ -85,15 +109,8 @@ def get_ram_proc():
     return max(0.0, min(100.0, (1 - avail / total) * 100))
 
 
-# Try psutil at startup, fall back to /proc
-try:
-    import psutil
-    _psutil_available = True
-except ImportError:
-    _psutil_available = False
-
+# Select metric source
 if _psutil_available:
-    print("[✓] psutil detected, using it for metrics")
 
     def get_cpu():
         return psutil.cpu_percent(interval=0.5)
@@ -101,7 +118,6 @@ if _psutil_available:
     def get_ram():
         return psutil.virtual_memory().percent
 else:
-    print("[!] psutil not found, using /proc instead")
     get_cpu = get_cpu_proc
     get_ram = get_ram_proc
 
