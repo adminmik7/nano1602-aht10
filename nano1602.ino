@@ -182,13 +182,12 @@ void updateDisplay() {
 
   // ─── Строка 1: CPU ───────────────────────────────────
   lcd.setCursor(0, 0);
-  // Полностью перезаписываем строку, чтобы не осталось «хвостов»
   int cpu = constrain((int)cpuLoad, 0, 100);
   lcd.print("CPU:");
   if (cpu < 10) lcd.print(" ");
   lcd.print(cpu);
   lcd.print("% ");
-  drawBar(10, 0, cpuLoad, 6);
+  drawBar(9, 0, cpuLoad, 5); // Сдвинули на 1 влево, уменьшили бар до 5
 
   // ─── Строка 2: RAM ───────────────────────────────────
   lcd.setCursor(0, 1);
@@ -197,5 +196,5 @@ void updateDisplay() {
   if (ram < 10) lcd.print(" ");
   lcd.print(ram);
   lcd.print("% ");
-  drawBar(10, 1, ramUsage, 6);
+  drawBar(9, 1, ramUsage, 5);
 }
