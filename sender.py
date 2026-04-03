@@ -60,10 +60,21 @@ except ImportError:
 
 
 def find_port():
-    """Find available USB-Serial port."""
+    """Find available USB-Serial port, prioritizing Arduino Nano."""
+    # Arduino Nano typically uses FTDI or CH340 chips
+    # Vendor IDs: 0x2341 (Arduino), 0x0403 (FTDI), 0x1a86 (CH340)
+    
+    # First, try common Arduino ports
     for dev in sorted(glob.glob("/dev/ttyUSB*") + glob.glob("/dev/ttyACM*")):
         if os.path.exists(dev):
-            return dev
+            try:
+                # Quick check if port is accessible
+                with serial.Serial(dev, 9600, timeout=0.5) as s:
+                    s.reset_input_buffer()
+                    return dev
+            except serial.SerialException:
+                continue
+                
     return None
 
 
