@@ -1,6 +1,6 @@
 # 🔌 nano1602 — Arduino Nano + LCD1602 PC Monitor
 
-**Latest Release:** [v1.4.1](https://github.com/adminmik7/nano1602/releases/tag/v1.4.1) 🚀
+**Latest Release:** [v1.5.0](https://github.com/adminmik7/nano1602/releases/tag/v1.5.0) 🚀
 
 CPU load + RAM usage on a 16×2 I2C display. Data sent via USB Serial.
 
