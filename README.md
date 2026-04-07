@@ -1,110 +1,45 @@
-# 🔌 nano1602 — Arduino Nano + LCD1602 PC Monitor
+# 🌡️🖥️ nano1602-aht10 — PC & Environment Monitor
 
-**Latest Release:** [v1.7.0](https://github.com/adminmik7/nano1602/releases/tag/v1.7.0) 🚀
+**Arduino Nano + LCD1602 + AHT10 Sensor**
 
-CPU load + RAM usage on a 16×2 I2C display. Data sent via USB Serial.
-
----
-
-## 📁 Файлы
-
-| Файл | Назначение |
-|---|---|
-| `nano1602.ino` | Прошивка для Arduino Nano |
-| `sender.py` | Отправка данных с Linux-ПК |
-| `start.sh` | Один скрипт: ставит Python + зависимости + запускает |
-| `requirements.txt` | Зависимости для `pip install -r` |
+Комбинированный монитор, который показывает загрузку компьютера (CPU/RAM) и климат в комнате (Температура/Влажность) на одном экране.
 
 ## 🔌 Подключение
 
-```
-Arduino Nano          LCD1602 (I2C)
-──────────────────────────────────────
-A4 (SDA)      ─────►  SDA
-A5 (SCL)      ─────►  SCL
-5V            ─────►  VCC
-GND           ─────►  GND
-USB           ─────►  PC (данные + питание)
-```
+Все устройства подключаются к одной шине I2C (параллельно):
 
-I2C адрес: **0x27** (если не работает — попробуй 0x3F)
+| Arduino Nano | LCD1602 (I2C) | AHT10 Sensor |
+|---|---|---|
+| A4 (SDA) | SDA | SDA |
+| A5 (SCL) | SCL | SCL |
+| 5V | VCC | VCC |
+| GND | GND | GND |
 
-## 🖥️ Экран
+> **Важно:** I2C адрес дисплея по умолчанию `0x27`. Если экран не работает, попробуй `0x3F` в коде.
 
-```
-CPU:45% [██████    ]
-RAM:62% [█████     ]
-```
+## 🚀 Быстрый старт
 
-Формат данных: `CPU:XX|RAM:XX\n`
+1.  **Установи библиотеки** в Arduino IDE:
+    *   `LiquidCrystal_I2C` (by Frank de Brabander)
+    *   `Adafruit AHTX0`
+    *   `Adafruit Sensor`
+2.  **Загрузи прошивку** `nano1602.ino` на Arduino Nano.
+3.  **Настрой Python-скрипт** (см. ниже).
 
-## 📥 Установка и Запуск
+## 🖥️ Вывод на экран
 
-### Шаг 1: Скачивание
-Склонируй репозиторий:
-```bash
-git clone https://github.com/adminmik7/nano1602.git
-cd nano1602
-```
+| Строка | Данные | Пример |
+|---|---|---|
+| 1 | CPU и RAM | `CPU:45%  RAM:60% ` |
+| 2 | Климат (AHT10) | `T:24.5°C  H:40.0% ` |
 
-### Шаг 2: Прошивка Arduino
-1. Открой `nano1602.ino` в **Arduino IDE**.
-2. Установи библиотеку `LiquidCrystal_I2C` через менеджер библиотек.
-3. Залей скетч в плату **Arduino Nano**. (Не забудь выбрать правильный порт и плату в меню "Инструменты").
+## 🐍 Python Sender (Linux/Windows)
 
-### Шаг 3: Запуск на ПК (Linux)
-Теперь нужно запустить скрипт на компьютере, который будет отправлять данные на Arduino.
+Скрипт `sender.py` отправляет данные с ПК на Arduino. 
+*Требует доработки для чтения данных с AHT10, подключенного к ПК, или может работать только с CPU/RAM.*
 
-**Самый простой способ (через `start.sh`):**
-```bash
-chmod +x start.sh
-./start.sh
-```
-> Скрипт сам проверит наличие Python3, установит `pyserial` и `psutil`, а затем найдет Arduino-порт.
+## ❓ Решение проблем
 
-**Запуск конкретного порта:**
-```bash
-./start.sh /dev/ttyUSB0
-```
-
-**Только настройка (без запуска):**
-```bash
-./start.sh setup
-```
-
-## ⚙️ Автозапуск (Systemd)
-Чтобы монитор запускался сам при включении компьютера:
-
-1. **Скопируй файлы** в системную папку:
-   ```bash
-   sudo cp -r . /opt/nano1602
-   sudo cp nano1602.service /etc/systemd/system/
-   ```
-
-2. **Включи сервис:**
-   ```bash
-   sudo systemctl daemon-reload
-   sudo systemctl enable --now nano1602.service
-   ```
-
-3. **Проверь статус:**
-   ```bash
-   sudo systemctl status nano1602.service
-   ```
----
-
-## 📊 Зависимости
-
-| Для чего | Что нужно |
-|---|---|
-| **Arduino** | Библиотека `LiquidCrystal_I2C` |
-| **Python (Linux)** | `pyserial` и `psutil` (устанавливаются автоматически) |
-
-## 📊 Зависимости
-
-**Arduino:**
-- `LiquidCrystal_I2C` (менеджер библиотек Arduino IDE)
-
-**Python:**
-- `pyserial` — авто-установка
-- `psutil` — авто-установка (без него работает из `/proc` — но менее точно)
+*   **Экран не горит:** Проверь питание и I2C адрес.
+*   **Нет данных AHT10:** Убедись, что датчик подключен к пинам A4/A5.
+*   **USB Lost:** Если кабель отключить, экран напишет "USB Lost!" и начнет мигать. При подключении все восстановится само.
