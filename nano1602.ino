@@ -1,39 +1,33 @@
 /*
- * PC Monitor — Arduino Nano + LCD1602 (I2C)
- * Line 1: CPU load + progress bar
- * Line 2: RAM usage + progress bar
+ * PC & Environment Monitor — Arduino Nano + LCD1602 (I2C) + AHT10
+ * Line 1: CPU load + RAM usage
+ * Line 2: Temperature + Humidity (from AHT10 sensor)
  * Data via USB Serial @ 9600 baud
  *
- * Format:  CPU:XX|RAM:XX
- * Example: CPU:45|RAM:62
+ * Format:  CPU:XX|RAM:XX|TEMP:XX|HUM:XX
+ * Example: CPU:45|RAM:62|TEMP:24.5|HUM:40.1
  *
  * Wiring:
- *   SDA -> A4
- *   SCL -> A5
+ *   SDA -> A4 (LCD + AHT10)
+ *   SCL -> A5 (LCD + AHT10)
  *   VCC -> 5V
  *   GND -> GND
  */
 
 #include <Wire.h>
 #include <LiquidCrystal_I2C.h>
+#include <Adafruit_Sensor.h>
+#include <Adafruit_AHTX0.h>
 
 // LCD1602 — адрес 0x27 (если не работает, попробуй 0x3F)
 LiquidCrystal_I2C lcd(0x27, 16, 2);
-
-// ─── Кастомные символы ───────────────────────────────────
-byte blockFull[8] = {
-  B11111, B11111, B11111, B11111,
-  B11111, B11111, B11111, B11111
-};
-
-byte blockEmpty[8] = {
-  B11111, B10001, B10001, B10001,
-  B10001, B10001, B10001, B11111
-};
+Adafruit_AHTX0 aht;
 
 // ─── Состояние ───────────────────────────────────────────
-float cpuLoad  = 0.0;
-float ramUsage = 0.0;
+int cpuLoad  = 0;
+int ramUsage = 0;
+float tempVal = 0.0;
+float humVal = 0.0;
 
 unsigned long lastUpdate = 0;
 bool usbConnected = false; // Статус USB-соединения
@@ -47,8 +41,6 @@ byte bufPos = 0;
 
 // ─── Экран ожидания ─────────────────────────────────────
 static bool waitingShown = false;
-static byte dots = 0;
-static unsigned long lastWaitingDraw = 0;
 
 // ─── SETUP ───────────────────────────────────────────────
 void setup() {
@@ -57,15 +49,20 @@ void setup() {
   // LCD
   lcd.init();
   lcd.backlight();
-  lcd.createChar(0, blockFull);
-  lcd.createChar(1, blockEmpty);
+
+  // AHT10
+  if (!aht.begin()) {
+    lcd.setCursor(0, 0);
+    lcd.print("AHT10 Error!");
+    while (1) delay(10);
+  }
 
   // Приветствие
   lcd.clear();
   lcd.setCursor(0, 0);
-  lcd.print("   PC Monitor    ");
+  lcd.print("  PC & Env Mon  ");
   lcd.setCursor(0, 1);
-  lcd.print(" Waiting for PC  ");
+  lcd.print(" Waiting for PC ");
   delay(2000);
 
   // Очищаем буфер
@@ -73,7 +70,7 @@ void setup() {
   bufPos = 0;
   waitingShown = false;
 
-  Serial.println("Nano1602 PC Monitor v1.0 — Ready");
+  Serial.println("Nano1602-AHT10 v1.0 — Ready");
 }
 
 // ─── LOOP ────────────────────────────────────────────────
@@ -119,100 +116,61 @@ void loop() {
 
 // ─── Парсинг данных ─────────────────────────────────────
 void parseData(char* data) {
-  // Ищем CPU: и RAM:
+  // Ищем метки
   char* cpuPtr = strstr(data, "CPU:");
   char* ramPtr = strstr(data, "RAM:");
+  char* tempPtr = strstr(data, "TEMP:");
+  char* humPtr = strstr(data, "HUM:");
 
-  if (cpuPtr != NULL) {
-    cpuPtr += 4;
-    char* end = strchr(cpuPtr, '|');
-    if (end == NULL) end = cpuPtr + strlen(cpuPtr);
-    char temp[8];
-    int len = min((int)(end - cpuPtr), 7);
-    strncpy(temp, cpuPtr, len);
-    temp[len] = '\0';
-    cpuLoad = atof(temp);
+  if (cpuPtr) cpuLoad = atoi(cpuPtr + 4);
+  if (ramPtr) ramUsage = atoi(ramPtr + 4);
+  
+  if (tempPtr) {
+    char tempStr[8];
+    strncpy(tempStr, tempPtr + 5, 7);
+    tempStr[7] = '\0';
+    tempVal = atof(tempStr);
   }
-
-  if (ramPtr != NULL) {
-    ramPtr += 4;
-    char* end = strchr(ramPtr, '|');
-    if (end == NULL) end = ramPtr + strlen(ramPtr);
-    char temp[8];
-    int len = min((int)(end - ramPtr), 7);
-    strncpy(temp, ramPtr, len);
-    temp[len] = '\0';
-    ramUsage = atof(temp);
+  
+  if (humPtr) {
+    char humStr[8];
+    strncpy(humStr, humPtr + 4, 7);
+    humStr[7] = '\0';
+    humVal = atof(humStr);
   }
 
   lastUpdate = millis();
-  connected = true;
+  usbConnected = true;
   Serial.println("OK");
-}
-
-// ─── Прогресс-бар ───────────────────────────────────────
-void drawBar(int col, int row, float value, int bars) {
-  int filled = map(constrain((int)value, 0, 100), 0, 100, 0, bars);
-
-  lcd.setCursor(col, row);
-  for (int i = 0; i < bars; i++) {
-    lcd.write((byte)(i < filled ? 0 : 1));
-  }
-}
-
-// ─── Экран ожидания (без lcd.clear!) ────────────────────
-void showWaitingScreen() {
-  // Рисуем только раз, потом обновляем точки
-  if (!waitingShown) {
-    lcd.setCursor(0, 0);
-    lcd.print("Waiting for PC  ");
-    lcd.setCursor(0, 1);
-    lcd.print("Connecting");
-    waitingShown = true;
-  }
-
-  // Обновляем точки каждые 500мс
-  if (millis() - lastWaitingDraw > 500) {
-    lastWaitingDraw = millis();
-    // Очищаем область точек (6 символов)
-    lcd.setCursor(10, 1);
-    for (int i = 0; i < 6; i++) lcd.print(' ');
-    // Рисуем точки
-    lcd.setCursor(10, 1);
-    for (int i = 0; i < (dots % 4); i++) lcd.print('.');
-    dots++;
-  }
 }
 
 // ─── Главный цикл дисплея ──────────────────────────────
 void updateDisplay() {
   if (!usbConnected) {
-    showWaitingScreen();
+    if (!waitingShown) {
+      lcd.clear();
+      waitingShown = true;
+    }
     return;
   }
+  waitingShown = false;
 
-  // Первичная очистка при возврате из режима ожидания
-  if (waitingShown) {
-    lcd.clear();
-    waitingShown = false;
-  }
-
-  // ─── Строка 1: CPU ───────────────────────────────────
+  // ─── Строка 1: CPU и RAM ─────────────────────────────
   lcd.setCursor(0, 0);
-  // Полностью перезаписываем строку, чтобы не осталось «хвостов»
-  int cpu = constrain((int)cpuLoad, 0, 100);
   lcd.print("CPU:");
-  if (cpu < 10) lcd.print(" ");
-  lcd.print(cpu);
+  if (cpuLoad < 10) lcd.print(" ");
+  lcd.print(cpuLoad);
+  lcd.print("%  RAM:");
+  if (ramUsage < 10) lcd.print(" ");
+  lcd.print(ramUsage);
   lcd.print("% ");
-  drawBar(10, 0, cpuLoad, 6);
 
-  // ─── Строка 2: RAM ───────────────────────────────────
+  // ─── Строка 2: Температура и Влажность (с AHT10) ─────
   lcd.setCursor(0, 1);
-  int ram = constrain((int)ramUsage, 0, 100);
-  lcd.print("RAM:");
-  if (ram < 10) lcd.print(" ");
-  lcd.print(ram);
+  lcd.print("T:");
+  lcd.print(tempVal, 1);
+  lcd.print((char)223); // Символ градуса
+  lcd.print("C  H:");
+  lcd.print(humVal, 1);
   lcd.print("% ");
-  drawBar(10, 1, ramUsage, 6);
 }
