@@ -36,9 +36,9 @@ float cpuLoad  = 0.0;
 float ramUsage = 0.0;
 
 unsigned long lastUpdate = 0;
-bool connected = false;
+bool usbConnected = false; // Статус USB-соединения
 
-static const unsigned long TIMEOUT_MS = 5000;
+static const unsigned long TIMEOUT_MS = 3000; // Таймаут 3 секунды
 
 // ─── Буфер (C-стиль, без String, без фрагментации) ─────
 static const byte MAX_BUF = 64;
@@ -81,6 +81,17 @@ void loop() {
   // Читаем Serial
   while (Serial.available() > 0) {
     char c = Serial.read();
+    
+    // Если получили хоть что-то, считаем что связь есть
+    if (!usbConnected) {
+      usbConnected = true;
+      lcd.clear();
+      lcd.setCursor(0, 0);
+      lcd.print("USB Connected!");
+      delay(500);
+      lcd.clear();
+    }
+
     if (c == '\n') {
       buffer[bufPos] = '\0';
       parseData(buffer);
@@ -91,12 +102,22 @@ void loop() {
     }
   }
 
-  // Таймаут — 5 сек без данных
+  // Проверка потери связи
   if (millis() - lastUpdate > TIMEOUT_MS) {
-    connected = false;
+    if (usbConnected) {
+      usbConnected = false;
+      lcd.clear();
+      lcd.setCursor(0, 0);
+      lcd.print("USB Lost!");
+      lcd.setCursor(0, 1);
+      lcd.print("Waiting...");
+    }
   }
 
-  updateDisplay();
+  if (usbConnected) {
+    updateDisplay();
+  }
+  
   delay(200);
 }
 

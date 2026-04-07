@@ -136,39 +136,50 @@ else:
 # ─── Main ────────────────────────────────────────────────
 
 def main():
-    port = sys.argv[1] if len(sys.argv) > 1 else find_port()
-    if not port:
-        print("Error: No USB-Serial port found. Use: python3 sender.py /dev/ttyUSB0")
-        sys.exit(1)
+    while True:
+        port = sys.argv[1] if len(sys.argv) > 1 else find_port()
+        if not port:
+            print("[!] No USB-Serial port found. Waiting for connection...")
+            time.sleep(2)
+            continue
 
-    with serial.Serial(port, BAUD, timeout=1) as ser:
-        time.sleep(2)  # wait for Arduino reset
-        ser.reset_input_buffer()
-        print(f"Connected on {port} @ {BAUD} baud (Ctrl+C to stop)")
+        try:
+            with serial.Serial(port, BAUD, timeout=1) as ser:
+                time.sleep(2)  # wait for Arduino reset
+                ser.reset_input_buffer()
+                print(f"[+] Connected on {port} @ {BAUD} baud")
 
-        while True:
-            cpu = get_cpu()
-            ram = get_ram()
-            line = f"CPU:{int(cpu)}|RAM:{int(ram)}\n"
-            ser.write(line.encode())
-
-            timeout = time.time() + 1
-            response = ""
-            while time.time() < timeout:
-                if ser.in_waiting:
+                while True:
+                    cpu = get_cpu()
+                    ram = get_ram()
+                    line = f"CPU:{int(cpu)}|RAM:{int(ram)}\n"
+                    
                     try:
-                        response = ser.readline().decode("utf-8", errors="replace").strip()
-                    except Exception:
-                        response = ""
-                    break
-                time.sleep(0.05)
+                        ser.write(line.encode())
+                    except (serial.SerialException, OSError) as e:
+                        print(f"[-] Connection lost: {e}")
+                        break # Выход из внутреннего цикла для переподключения
 
-            if response:
-                print(f"  {line.strip()}  ->  {response}")
-            else:
-                print(f"  {line.strip()}")
+                    timeout = time.time() + 1
+                    response = ""
+                    while time.time() < timeout:
+                        if ser.in_waiting:
+                            try:
+                                response = ser.readline().decode("utf-8", errors="replace").strip()
+                            except Exception:
+                                response = ""
+                            break
+                        time.sleep(0.05)
 
-            time.sleep(max(0, UPDATE_INTERVAL - 0.5))
+                    if response:
+                        print(f"  {line.strip()}  ->  {response}")
+                    else:
+                        print(f"  {line.strip()}")
+
+                    time.sleep(max(0, UPDATE_INTERVAL - 0.5))
+        except (serial.SerialException, OSError) as e:
+            print(f"[-] Port error: {e}. Reconnecting...")
+            time.sleep(2)
 
 
 if __name__ == "__main__":
