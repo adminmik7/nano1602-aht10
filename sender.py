@@ -1,190 +1,103 @@
 #!/usr/bin/env python3
-"""Send CPU load + RAM usage to Arduino Nano (nano1602.ino) via USB Serial.
-Works with OR without psutil — falls back to /proc/stat + /proc/meminfo.
-Auto-installs all dependencies."""
+"""Send CPU/RAM to Arduino + AHT10.
+Reads AHT10 via I2C (if available) and sends: CPU:XX|RAM:XX|TEMP:XX|HUM:XX
+"""
 
 import time
 import sys
 import glob
 import os
 import subprocess
+import serial
 
 BAUD = 9600
-UPDATE_INTERVAL = 2  # seconds
+UPDATE_INTERVAL = 2
 
-
-# ─── Auto-install dependencies ───────────────────────────
-
-def _pip_install(package):
-    """Install a Python package via pip."""
-    print(f"[!] {package} not found, installing...")
-    try:
-        subprocess.check_call(
-            [sys.executable, "-m", "pip", "install", "--quiet", package],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        return True
-    except Exception as e:
-        print(f"[✗] Failed to install {package}: {e}")
-        return False
-
-
-# pyserial — required (connection to Arduino)
+# --- AHT10 via I2C (Linux) ---
+_AHT_AVAILABLE = False
 try:
-    import serial
+    import smbus2
+    import time
+    _bus = smbus2.SMBus(1) # I2C bus 1 (Raspbian/Linux)
+    _AHT_ADDR = 0x38
+    _AHT_AVAILABLE = True
 except ImportError:
-    if _pip_install("pyserial"):
-        import serial
-        print("[✓] pyserial installed successfully")
-    else:
-        print("  Manual: pip3 install pyserial")
-        sys.exit(1)
+    print("[?] smbus2 not found. Install via: pip3 install smbus2")
+    print("[?] AHT10 data will be sent as 0.0 if not available.")
 
+def read_aht10():
+    if not _AHT_AVAILABLE:
+        return 0.0, 0.0
+    try:
+        # Trigger measurement
+        _bus.write_i2c_block_data(_AHT_ADDR, 0xAC, [0x33, 0x00])
+        time.sleep(0.08)
+        data = _bus.read_i2c_block_data(_AHT_ADDR, 0, 6)
+        
+        # Parse humidity
+        hum_raw = ((data[1] << 16) | (data[2] << 8) | data[3]) >> 4
+        humidity = (hum_raw * 100) / (2**20)
+        
+        # Parse temperature
+        temp_raw = ((data[3] & 0x0F) << 16) | (data[4] << 8) | data[5]
+        temperature = (temp_raw * 200 / (2**20)) - 50
+        
+        return round(temperature, 1), round(humidity, 1)
+    except Exception:
+        return 0.0, 0.0
 
-# psutil — optional (better metrics, but /proc fallback works)
+# --- CPU / RAM metrics ---
 try:
     import psutil
-    _psutil_available = True
+    def get_cpu(): return psutil.cpu_percent(interval=0.5)
+    def get_ram(): return psutil.virtual_memory().percent
 except ImportError:
-    if _pip_install("psutil"):
-        import psutil
-        print("[✓] psutil installed successfully (best accuracy)")
-        _psutil_available = True
-    else:
-        print("[?] psutil install skipped, will use /proc (less accurate)")
-        _psutil_available = False
-
-
-# ─── Port detection ──────────────────────────────────────
-
+    print("[!] psutil not found. Install via: pip3 install psutil")
+    def get_cpu(): return 0
+    def get_ram(): return 0
 
 def find_port():
-    """Find available USB-Serial port, prioritizing Arduino Nano."""
-    # Arduino Nano typically uses FTDI or CH340 chips
-    # Vendor IDs: 0x2341 (Arduino), 0x0403 (FTDI), 0x1a86 (CH340)
-    
-    # First, try common Arduino ports
     for dev in sorted(glob.glob("/dev/ttyUSB*") + glob.glob("/dev/ttyACM*")):
         if os.path.exists(dev):
-            try:
-                # Quick check if port is accessible
-                with serial.Serial(dev, 9600, timeout=0.5) as s:
-                    s.reset_input_buffer()
-                    return dev
-            except serial.SerialException:
-                continue
-                
+            return dev
     return None
-
-
-# ─── CPU / RAM metrics (no psutil) ────────────────────────
-
-
-def _read_proc_stat():
-    """Read CPU idle/total from /proc/stat."""
-    with open("/proc/stat") as f:
-        parts = f.readline().split()
-    idle = int(parts[3]) + int(parts[4])
-    total = sum(int(x) for x in parts[1:])
-    return idle, total
-
-
-_cpu_prev = _read_proc_stat()
-
-
-def get_cpu_proc():
-    """CPU % over last interval."""
-    global _cpu_prev
-    time.sleep(0.5)
-    idle2, total2 = _read_proc_stat()
-    idle_d = idle2 - _cpu_prev[0]
-    total_d = total2 - _cpu_prev[1]
-    _cpu_prev = (idle2, total2)
-    if total_d == 0:
-        return 0.0
-    return max(0.0, min(100.0, (1 - idle_d / total_d) * 100))
-
-
-def get_ram_proc():
-    """RAM usage % from /proc/meminfo."""
-    mem = {}
-    with open("/proc/meminfo") as f:
-        for line in f:
-            parts = line.split()
-            mem[parts[0].rstrip(":")] = int(parts[1])
-    total = mem.get("MemTotal", 0)
-    avail = mem.get("MemAvailable", mem.get("MemFree", 0))
-    if total == 0:
-        return 0.0
-    return max(0.0, min(100.0, (1 - avail / total) * 100))
-
-
-# Select metric source
-if _psutil_available:
-
-    def get_cpu():
-        return psutil.cpu_percent(interval=0.5)
-
-    def get_ram():
-        return psutil.virtual_memory().percent
-else:
-    get_cpu = get_cpu_proc
-    get_ram = get_ram_proc
-
-
-# ─── Main ────────────────────────────────────────────────
 
 def main():
     while True:
         port = sys.argv[1] if len(sys.argv) > 1 else find_port()
         if not port:
-            print("[!] No USB-Serial port found. Waiting for connection...")
+            print("[!] No port found. Waiting...")
             time.sleep(2)
             continue
 
         try:
             with serial.Serial(port, BAUD, timeout=1) as ser:
-                time.sleep(2)  # wait for Arduino reset
-                ser.reset_input_buffer()
-                print(f"[+] Connected on {port} @ {BAUD} baud")
-
+                time.sleep(2)
+                print(f"[+] Connected on {port}")
                 while True:
                     cpu = get_cpu()
                     ram = get_ram()
-                    line = f"CPU:{int(cpu)}|RAM:{int(ram)}\n"
+                    temp, hum = read_aht10()
+                    
+                    line = f"CPU:{int(cpu)}|RAM:{int(ram)}|TEMP:{temp}|HUM:{hum}\n"
                     
                     try:
                         ser.write(line.encode())
-                    except (serial.SerialException, OSError) as e:
-                        print(f"[-] Connection lost: {e}")
-                        break # Выход из внутреннего цикла для переподключения
+                    except (serial.SerialException, OSError):
+                        print("[-] Connection lost.")
+                        break
 
-                    timeout = time.time() + 1
-                    response = ""
-                    while time.time() < timeout:
-                        if ser.in_waiting:
-                            try:
-                                response = ser.readline().decode("utf-8", errors="replace").strip()
-                            except Exception:
-                                response = ""
-                            break
-                        time.sleep(0.05)
-
-                    if response:
-                        print(f"  {line.strip()}  ->  {response}")
-                    else:
-                        print(f"  {line.strip()}")
-
-                    time.sleep(max(0, UPDATE_INTERVAL - 0.5))
-        except (serial.SerialException, OSError) as e:
-            print(f"[-] Port error: {e}. Reconnecting...")
+                    if ser.in_waiting:
+                        resp = ser.readline().decode().strip()
+                        print(f"  {line.strip()} -> {resp}")
+                    
+                    time.sleep(UPDATE_INTERVAL)
+        except Exception as e:
+            print(f"[-] Error: {e}. Reconnecting...")
             time.sleep(2)
-
 
 if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:
         print("\nStopped.")
-        sys.exit(0)
