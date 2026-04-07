@@ -86,10 +86,6 @@ void loop() {
     if (!usbConnected) {
       usbConnected = true;
       lcd.clear();
-      lcd.setCursor(0, 0);
-      lcd.print("USB Connected!");
-      delay(500);
-      lcd.clear();
     }
 
     if (c == '\n') {
@@ -190,7 +186,7 @@ void showWaitingScreen() {
 
 // ─── Главный цикл дисплея ──────────────────────────────
 void updateDisplay() {
-  if (!connected) {
+  if (!usbConnected) {
     showWaitingScreen();
     return;
   }
